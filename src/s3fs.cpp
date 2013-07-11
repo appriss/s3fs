@@ -1754,11 +1754,23 @@ static int create_file_object(const char *path, mode_t mode, uid_t uid, gid_t gi
 
 static int s3fs_mknod(const char *path, mode_t mode, dev_t rdev)
 {
-  FGPRINT("s3fs_mknod[path=%s][mode=%d]\n", path, mode);
+  int result;
+  headers_t meta;
+  struct fuse_context* pcxt;
+  
+  FGPRINT("s3fs_mknod[path=%s][mode=0%o][dev=%lu]\n", path, mode, rdev);
 
-  // Could not make block or character special files on S3,
-  // always return a error.
-  return -EPERM;
+  if(NULL == (pcxt = fuse_get_context())){
+    return -EIO;
+  }
+
+  result = create_file_object(path, mode, pcxt->uid, pcxt->gid);
+  StatCache::getStatCacheData()->DelStat(path);
+  if(result != 0){
+    return result;
+  }
+
+  return result;
 }
 
 static int s3fs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
