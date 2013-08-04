@@ -28,6 +28,9 @@
 #include <pwd.h>
 #include <grp.h>
 #include <syslog.h>
+#include <pthread.h>
+#include <sys/types.h>
+#include <dirent.h>
 
 #include <string>
 #include <sstream>
@@ -398,6 +401,56 @@ void free_mvnodes(MVNODE *head)
 }
 
 //-------------------------------------------------------------------
+// Class AutoLock
+//-------------------------------------------------------------------
+AutoLock::AutoLock(pthread_mutex_t* pmutex) : auto_mutex(pmutex), is_locked(false)
+{
+  Lock();
+}
+
+AutoLock::~AutoLock()
+{
+  Unlock();
+}
+
+bool AutoLock::Lock(void)
+{
+  if(!auto_mutex){
+    return false;
+  }
+  if(is_locked){
+    // already locked
+    return true;
+  }
+  try{
+    pthread_mutex_lock(auto_mutex);
+    is_locked = true;
+  }catch(exception& e){
+    is_locked = false;
+    return false;
+  }
+  return true;
+}
+
+bool AutoLock::Unlock(void)
+{
+  if(!auto_mutex){
+    return false;
+  }
+  if(!is_locked){
+    // already unlocked
+    return true;
+  }
+  try{
+    pthread_mutex_unlock(auto_mutex);
+    is_locked = false;
+  }catch(exception& e){
+    return false;
+  }
+  return true;
+}
+
+//-------------------------------------------------------------------
 // Utility for UID/GID
 //-------------------------------------------------------------------
 // get user name from uid
@@ -494,6 +547,53 @@ int mkdirp(const string& path, mode_t mode)
   return 0;
 }
 
+bool delete_files_in_dir(const char* dir, bool is_remove_own)
+{
+  DIR*           dp;
+  struct dirent* dent;
+
+  if(NULL == (dp = opendir(dir))){
+    //FGPRINT("delete_files_in_dir: could not open dir(%s) - errno(%d)\n", dir, errno);
+    return false;
+  }
+
+  for(dent = readdir(dp); dent; dent = readdir(dp)){
+    if(0 == strcmp(dent->d_name, "..") || 0 == strcmp(dent->d_name, ".")){
+      continue;
+    }
+    string   fullpath = dir;
+    fullpath         += "/";
+    fullpath         += dent->d_name;
+    struct stat st;
+    if(0 != lstat(fullpath.c_str(), &st)){
+      FGPRINT("delete_files_in_dir: could not get stats of file(%s) - errno(%d)\n", fullpath.c_str(), errno);
+      closedir(dp);
+      return false;
+    }
+    if(S_ISDIR(st.st_mode)){
+      // dir -> Reentrant
+      if(!delete_files_in_dir(fullpath.c_str(), true)){
+        //FGPRINT("delete_files_in_dir: could not remove sub dir(%s) - errno(%d)\n", fullpath.c_str(), errno);
+        closedir(dp);
+        return false;
+      }
+    }else{
+      if(0 != unlink(fullpath.c_str())){
+        FGPRINT("delete_files_in_dir: could not remove file(%s) - errno(%d)\n", fullpath.c_str(), errno);
+        closedir(dp);
+        return false;
+      }
+    }
+  }
+  closedir(dp);
+
+  if(is_remove_own && 0 != rmdir(dir)){
+    FGPRINT("delete_files_in_dir: could not remove dir(%s) - errno(%d)\n", dir, errno);
+    return false;
+  }
+  return true;
+}
+
 //-------------------------------------------------------------------
 // Utility functions for convert
 //-------------------------------------------------------------------
@@ -547,34 +647,39 @@ mode_t get_mode(headers_t& meta, const char* path, bool checkdir, bool forcedir)
       isS3sync = true;
     }
   }
-  if(!isS3sync){
-    if(checkdir){
-      if(forcedir){
-        mode |= S_IFDIR;
-      }else{
-        if(meta.end() != (iter = meta.find("Content-Type"))){
-          string strConType = (*iter).second;
-          if(strConType == "application/x-directory"){
-            mode |= S_IFDIR;
-          }else if(path && 0 < strlen(path) && '/' == path[strlen(path) - 1]){
-            if(strConType == "binary/octet-stream" || strConType == "application/octet-stream"){
+  // Checking the bitmask, if the last 3 bits are all zero then process as a regular
+  // file type (S_IFDIR or S_IFREG), otherwise return mode unmodified so that S_IFIFO, 
+  // S_IFSOCK, S_IFCHR, S_IFLNK and S_IFBLK devices can be processed properly by fuse.
+  if(!(mode & S_IFMT)){ 
+    if(!isS3sync){
+      if(checkdir){
+        if(forcedir){
+          mode |= S_IFDIR;
+        }else{
+          if(meta.end() != (iter = meta.find("Content-Type"))){
+            string strConType = (*iter).second;
+            if(strConType == "application/x-directory"){
               mode |= S_IFDIR;
+            }else if(path && 0 < strlen(path) && '/' == path[strlen(path) - 1]){
+              if(strConType == "binary/octet-stream" || strConType == "application/octet-stream"){
+                mode |= S_IFDIR;
+              }else{
+                mode |= S_IFREG;
+              }
             }else{
               mode |= S_IFREG;
             }
           }else{
             mode |= S_IFREG;
           }
-        }else{
-          mode |= S_IFREG;
         }
       }
-    }
-  }else{
-    if(!checkdir){
-      // cut dir/reg flag.
-      mode &= ~S_IFDIR;
-      mode &= ~S_IFREG;
+    }else{
+      if(!checkdir){
+        // cut dir/reg flag.
+        mode &= ~S_IFDIR;
+        mode &= ~S_IFREG;
+      }
     }
   }
   return mode;
@@ -637,6 +742,41 @@ time_t get_lastmodified(headers_t& meta)
   return get_lastmodified((*iter).second.c_str());
 }
 
+//
+// Returns it whether it is an object with need checking in detail.
+// If this function returns true, the object is possible to be directory
+// and is needed checking detail(searching sub object).
+//
+bool is_need_check_obj_detail(headers_t& meta)
+{
+  headers_t::const_iterator iter;
+
+  // directory object is Content-Length as 0.
+  if(0 != get_size(meta)){
+    return false;
+  }
+  // if the object has x-amz-meta information, checking is no more.
+  if(meta.end() != meta.find("x-amz-meta-mode")  ||
+     meta.end() != meta.find("x-amz-meta-mtime") ||
+     meta.end() != meta.find("x-amz-meta-uid")   ||
+     meta.end() != meta.find("x-amz-meta-gid")   ||
+     meta.end() != meta.find("x-amz-meta-owner") ||
+     meta.end() != meta.find("x-amz-meta-group") ||
+     meta.end() != meta.find("x-amz-meta-permissions") )
+  {
+    return false;
+  }
+  // if there is not Content-Type, or Content-Type is "x-directory",
+  // checking is no more.
+  if(meta.end() == (iter = meta.find("Content-Type"))){
+    return false;
+  }
+  if("application/x-directory" == (*iter).second){
+    return false;
+  }
+  return true;
+}
+
 //-------------------------------------------------------------------
 // Help
 //-------------------------------------------------------------------
@@ -674,11 +814,14 @@ void show_help (void)
     "   use_cache (default=\"\" which means disabled)\n"
     "      - local folder to use for local file cache\n"
     "\n"
-    "   use_rrs (default=\"\" which means diabled)\n"
-    "      - use Amazon's Reduced Redundancy Storage when set to 1\n"
+    "   del_cache (delete local file cache)\n"
+    "      - delete local file cache when s3fs starts and exits.\n"
     "\n"
-    "   use_sse (default=\"\" which means diabled)\n"
-    "      - use Amazon's Server Site Encryption when set to 1\n"
+    "   use_rrs (default is disable)\n"
+    "      - this option makes Amazon's Reduced Redundancy Storage enable.\n"
+    "\n"
+    "   use_sse (default is disable)\n"
+    "      - this option makes Amazon's Server Site Encryption enable.\n"
     "\n"
     "   public_bucket (default=\"\" which means disabled)\n"
     "      - anonymously mount a public bucket when set to 1\n"
@@ -708,32 +851,51 @@ void show_help (void)
     "      You can specify this option for performance, s3fs memorizes \n"
     "      in stat cache that the object(file or directory) does not exist.\n"
     "\n"
-    "   nodnscache - disable dns cache\n"
+    "   nodnscache (disable dns cache)\n"
     "      - s3fs is always using dns cache, this option make dns cache disable.\n"
+    "\n"
+    "   multireq_max (default=\"500\")\n"
+    "      - maximum number of parallel request for listing objects.\n"
+    "\n"
+    "   parallel_count (default=\"5\")\n"
+    "      - number of parallel request for uploading big objects.\n"
+    "      s3fs uploads large object(over 20MB) by multipart post request, \n"
+    "      and sends parallel requests.\n"
+    "      This option limits parallel request count which s3fs requests \n"
+    "      at once. It is necessary to set this value depending on a CPU \n"
+    "      and a network band.\n"
+    "\n"
+    "   fd_page_size (default=\"52428800\"(50MB))\n"
+    "      - number of internal management page size for each file discriptor.\n"
+    "      For delayed reading and writing by s3fs, s3fs manages pages which \n"
+    "      is separated from object. Each pages has a status that data is \n"
+    "      already loaded(or not loaded yet).\n"
+    "      This option should not be changed when you don't have a trouble \n"
+    "      with performance.\n"
     "\n"
     "   url (default=\"http://s3.amazonaws.com\")\n"
     "      - sets the url to use to access amazon s3\n"
     "\n"
-    "   nomultipart - disable multipart uploads\n"
+    "   nomultipart (disable multipart uploads)\n"
     "\n"
     "   enable_content_md5 (default is disable)\n"
     "      - verifying uploaded object without multipart by content-md5 header.\n"
     "\n"
-    "   noxmlns - disable registing xml name space.\n"
+    "   noxmlns (disable registing xml name space)\n"
     "        disable registing xml name space for response of \n"
     "        ListBucketResult and ListVersionsResult etc. Default name \n"
     "        space is looked up from \"http://s3.amazonaws.com/doc/2006-03-01\".\n"
     "        This option should not be specified now, because s3fs looks up\n"
     "        xmlns automatically after v1.66.\n"
     "\n"
-    "   nocopyapi - for other incomplete compatibility object storage.\n"
+    "   nocopyapi (for other incomplete compatibility object storage)\n"
     "        For a distributed object storage which is compatibility S3\n"
     "        API without PUT(copy api).\n"
     "        If you set this option, s3fs do not use PUT with \n"
     "        \"x-amz-copy-source\"(copy api). Because traffic is increased\n"
     "        2-3 times by this option, we do not recommend this.\n"
     "\n"
-    "   norenameapi - for other incomplete compatibility object storage.\n"
+    "   norenameapi (for other incomplete compatibility object storage)\n"
     "        For a distributed object storage which is compatibility S3\n"
     "        API without PUT(copy api).\n"
     "        This option is a subset of nocopyapi option. The nocopyapi\n"

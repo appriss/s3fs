@@ -23,6 +23,13 @@
           printf(__VA_ARGS__); \
        }
 
+#define FGPRINT2(...) \
+       if(foreground2){ \
+          printf(__VA_ARGS__); \
+       }
+
+#define SAFESTRPTR(strptr) (strptr ? strptr : "")
+
 //
 // Typedef
 //
@@ -33,17 +40,12 @@ typedef std::map<std::string, std::string> headers_t;
 //
 extern bool debug;
 extern bool foreground;
-extern int retries;
-extern long connect_timeout;
-extern time_t readwrite_timeout;
-extern std::string AWSAccessKeyId;
-extern std::string AWSSecretAccessKey;
+extern bool foreground2;
+extern bool nomultipart;
 extern std::string program_name;
-extern std::string ssl_verify_hostname;
 extern std::string service_path;
 extern std::string host;
 extern std::string bucket;
-extern std::string public_bucket;
 extern std::string mount_prefix;
 
 #endif // S3FS_COMMON_H_
