@@ -1,0 +1,4 @@
+[Project]
+Name=s3fs
+Manager=KDevCMakeManager
+VersionControl=kdevgit
