@@ -1,5 +1,9 @@
 project(s3fs)
 
-add_executable(s3fs main.cpp)
+cmake_minimum_required(VERSION 2.8)
 
-install(TARGETS s3fs RUNTIME DESTINATION bin)
+add_subdirectory(src)
+
+# add_executable(s3fs)
+
+# install(TARGETS s3fs RUNTIME DESTINATION bin)

@@ -1,5 +1,5 @@
+build
 .git
 .kdev4
 *.kdev4
 *.o
-CMakelist*

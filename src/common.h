@@ -1,6 +1,8 @@
 #ifndef S3FS_COMMON_H_
 #define S3FS_COMMON_H_
 
+#include "crypto.h"
+
 //
 // Macro
 //
@@ -42,10 +44,13 @@ extern bool debug;
 extern bool foreground;
 extern bool foreground2;
 extern bool nomultipart;
+extern bool encrypt_tmp_files;
 extern std::string program_name;
 extern std::string service_path;
 extern std::string host;
 extern std::string bucket;
 extern std::string mount_prefix;
+
+extern s3fs::Crypto *crypto;
 
 #endif // S3FS_COMMON_H_

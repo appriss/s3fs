@@ -50,6 +50,7 @@
 #include "string_util.h"
 #include "s3fs.h"
 #include "s3fs_util.h"
+#include "crypto.h"
 
 using namespace std;
 
@@ -150,7 +151,7 @@ curltime_t      S3fsCurl::curl_times;
 curlprogress_t  S3fsCurl::curl_progress;
 string          S3fsCurl::curl_ca_bundle;
 mimes_t         S3fsCurl::mimeTypes;
-int             S3fsCurl::max_parallel_cnt    = 5;    // default
+int             S3fsCurl::max_parallel_cnt    = 1;    // 5 default
 
 //-------------------------------------------------------------------
 // Class methods for S3fsCurl
@@ -478,6 +479,8 @@ size_t S3fsCurl::WriteMemoryCallback(void* ptr, size_t blockSize, size_t numBloc
     S3FS_FUSE_EXIT();
     return -1;
   }
+  
+//   cout << "S3fsCurl::WriteMemoryCallback: " << (char*)ptr << endl; 
   return (blockSize * numBlocks);
 }
 
@@ -491,6 +494,7 @@ size_t S3fsCurl::ReadCallback(void* ptr, size_t size, size_t nmemb, void* userp)
   if(0 >= pCurl->postdata_remaining){
     return 0;
   }
+  
   int copysize = std::min((int)(size * nmemb), pCurl->postdata_remaining);
   memcpy(ptr, pCurl->postdata, copysize);
 
@@ -498,6 +502,23 @@ size_t S3fsCurl::ReadCallback(void* ptr, size_t size, size_t nmemb, void* userp)
   pCurl->postdata          += static_cast<size_t>(copysize);
 
   return copysize;
+}
+
+size_t S3fsCurl::EncryptedReadCallback(void* ptr, size_t size, size_t nmemb, void* userp)
+{
+  EncryptedData *encryptedData = (EncryptedData*)userp;
+  
+  if(1 > (size * nmemb)){
+    return 0;
+  }
+  
+  if(encryptedData->offset >= encryptedData->size)
+    return 0;
+  
+  int bytesRead = crypto->preadAES(encryptedData->fd, (char*)ptr, (size * nmemb), encryptedData->offset);
+  encryptedData->offset += bytesRead;
+    
+  return bytesRead;
 }
 
 size_t S3fsCurl::HeaderCallback(void* data, size_t blockSize, size_t numBlocks, void* userPtr)
@@ -535,19 +556,44 @@ size_t S3fsCurl::UploadReadCallback(void* ptr, size_t size, size_t nmemb, void* 
   ssize_t copysize = (size * nmemb) < (size_t)pCurl->partdata.size ? (size * nmemb) : (size_t)pCurl->partdata.size;
   ssize_t readbytes;
   ssize_t totalread;
-  // read and set
-  for(totalread = 0, readbytes = 0; totalread < copysize; totalread += readbytes){
-    readbytes = pread(pCurl->partdata.fd, &((char*)ptr)[totalread], (copysize - totalread), pCurl->partdata.startpos + totalread);
-    if(0 == readbytes){
-      // eof
-      break;
-    }else if(-1 == readbytes){
-      // error
-      FGPRINT("S3fsCurl::UploadReadCallback: read file error(%d).\n", errno);
-      SYSLOGERR("read file error(%d).", errno);
-      return 0;
+  
+//   if(encrypt_tmp_files)
+//   {
+//       readbytes = crypto->preadAES(pCurl->partdata.fd, (char*)ptr, (size * nmemb), pCurl->partdata.startpos);
+//       pCurl->partdata.startpos += readbytes;
+//       pCurl->partdata.size     -= readbytes;
+//       
+// //       if(pCurl->partdata.size < 0)
+// // 	pCurl->partdata.size = 0;
+// //       cout << "Testing curl read encryption, Content Read: " << (char*)ptr << endl;
+//  
+//       return readbytes;
+//   }
+//   else
+//   {
+    // read and set
+    for(totalread = 0, readbytes = 0; totalread < copysize; totalread += readbytes){
+      if(encrypt_tmp_files)
+      {
+	readbytes = crypto->preadAES(pCurl->partdata.fd, &((char*)ptr)[totalread], (copysize - totalread), pCurl->partdata.startpos + totalread);
+// 	cout << "Testing curl read encryption, bytesRead:" << readbytes << " StartPos:" << pCurl->partdata.startpos << endl;
+      }
+      else
+      {
+	readbytes = pread(pCurl->partdata.fd, &((char*)ptr)[totalread], (copysize - totalread), pCurl->partdata.startpos + totalread);
+      }
+      if(0 == readbytes){
+	// eof
+	break;
+      }else if(-1 == readbytes){
+	// error
+	FGPRINT("S3fsCurl::UploadReadCallback: read file error(%d).\n", errno);
+	SYSLOGERR("read file error(%d).", errno);
+	return 0;
+      }
     }
-  }
+//   }
+  
   pCurl->partdata.startpos += totalread;
   pCurl->partdata.size     -= totalread;
 
@@ -572,7 +618,16 @@ size_t S3fsCurl::DownloadWriteCallback(void* ptr, size_t size, size_t nmemb, voi
 
   // write
   for(totalwrite = 0, writebytes = 0; totalwrite < copysize; totalwrite += writebytes){
-    writebytes = pwrite(pCurl->partdata.fd, &((char*)ptr)[totalwrite], (copysize - totalwrite), pCurl->partdata.startpos + totalwrite);
+    if(encrypt_tmp_files)
+    {
+//       cout << "Testing curl write encryption" << endl;
+      writebytes = crypto->pwriteAES(pCurl->partdata.fd, &((char*)ptr)[totalwrite], (copysize - totalwrite), pCurl->partdata.startpos + totalwrite);
+    }
+    else
+    {
+      writebytes = pwrite(pCurl->partdata.fd, &((char*)ptr)[totalwrite], (copysize - totalwrite), pCurl->partdata.startpos + totalwrite);
+    }
+    
     if(0 == writebytes){
       // eof?
       break;
@@ -681,13 +736,21 @@ int S3fsCurl::SetMaxParallelCount(int value)
 
 bool S3fsCurl::UploadMultipartPostCallback(S3fsCurl* s3fscurl)
 {
+//   cout << "DEBUG UploadMultipartPostCallback" << endl;
   if(!s3fscurl){
     return false;
   }
+  
+//   cout << "DEBUG ETAG: " << s3fscurl->partdata.etag.c_str() << endl;
+//   cout << "DEBUG HDATA: " << s3fscurl->headdata->str() << endl;
+//   cout << "DEBUG STRSTR: " << strstr(s3fscurl->headdata->str(), s3fscurl->partdata.etag.c_str()) << endl;
   // check etag(md5);
   if(NULL == strstr(s3fscurl->headdata->str(), s3fscurl->partdata.etag.c_str())){
-    return false;
+//     cout << "DEBUG UploadMultipartPostCallback: false" << endl;
+    if(!encrypt_tmp_files)  
+      return false;
   }
+  
   s3fscurl->partdata.etaglist->at(s3fscurl->partdata.etagpos).assign(s3fscurl->partdata.etag);
   s3fscurl->partdata.uploaded = true;
 
@@ -696,6 +759,7 @@ bool S3fsCurl::UploadMultipartPostCallback(S3fsCurl* s3fscurl)
 
 S3fsCurl* S3fsCurl::UploadMultipartPostRetryCallback(S3fsCurl* s3fscurl)
 {
+//   cout << "DEBUG: UploadMultipartPostRetryCallback called" << endl;
   if(!s3fscurl){
     return NULL;
   }
@@ -753,7 +817,9 @@ int S3fsCurl::ParallelMultipartUploadRequest(const char* tpath, headers_t& meta,
     }
     return -errno;
   }
-  if(-1 == fstat(fd2, &st)){
+  
+//   if(-1 == fstat(fd2, &st)){
+  if(-1 == ((encrypt_tmp_files) ? crypto->fstatAES(fd2, &st) : fstat(fd2, &st))){
     FGPRINT("S3fsCurl::ParallelMultipartUploadRequest: Invalid file discriptor(errno=%d)\n", errno);
     SYSLOGERR("Invalid file discriptor(errno=%d)", errno);
     fclose(file);
@@ -796,7 +862,7 @@ int S3fsCurl::ParallelMultipartUploadRequest(const char* tpath, headers_t& meta,
       s3fscurl_para->partdata.startpos = st.st_size - remaining_bytes;
       s3fscurl_para->partdata.size     = chunk;
       s3fscurl_para->partdata.add_etag_list(&list);
-
+// cout << "DEBUG, Creating partnum: " << para_cnt << " StartPos: " << s3fscurl_para->partdata.startpos << " Length: " << s3fscurl_para->partdata.size << endl;
       // initiate upload part for parallel
       if(0 != (result = s3fscurl_para->UploadMultipartPostSetup(tpath, list.size(), upload_id))){
         FGPRINT("S3fsCurl::ParallelMultipartUploadRequest: failed uploading part setup(%d)\n", result);
@@ -1645,8 +1711,24 @@ int S3fsCurl::PutRequest(const char* tpath, headers_t& meta, int fd, bool ow_sse
   curl_easy_setopt(hCurl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
   curl_easy_setopt(hCurl, CURLOPT_HTTPHEADER, requestHeaders);
   if(file){
-    curl_easy_setopt(hCurl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st.st_size)); // Content-Length
-    curl_easy_setopt(hCurl, CURLOPT_INFILE, file);
+    if(encrypt_tmp_files)
+    {     
+      struct stat st2;
+      crypto->fstatAES(fd2, &st2);
+      EncryptedData encryptedData;
+      encryptedData.fd = fd2;
+      encryptedData.offset = 0;
+      encryptedData.size = st2.st_size;
+      curl_easy_setopt(hCurl, CURLOPT_PUT, true);
+      curl_easy_setopt(hCurl, CURLOPT_READFUNCTION, S3fsCurl::EncryptedReadCallback);
+      curl_easy_setopt(hCurl, CURLOPT_READDATA, &encryptedData);
+      curl_easy_setopt(hCurl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st2.st_size)); // Content-Length
+    }
+    else
+    {
+      curl_easy_setopt(hCurl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st.st_size)); // Content-Length
+      curl_easy_setopt(hCurl, CURLOPT_INFILE, file);
+    } 
   }else{
     curl_easy_setopt(hCurl, CURLOPT_INFILESIZE, 0);             // Content-Length: 0
   }
@@ -1926,6 +2008,11 @@ int S3fsCurl::CompleteMultipartPostRequest(const char* tpath, string& upload_id,
   if(!tpath){
     return -1;
   }
+  
+//   for(int cnt = 0; cnt < (int)parts.size(); cnt++)
+//   {
+//     cout << "DEBUG PART LIST ETAGS: " << parts[cnt] << endl;
+//   }
 
   // make contents
   string postContent;
@@ -1941,6 +2028,7 @@ int S3fsCurl::CompleteMultipartPostRequest(const char* tpath, string& upload_id,
     postContent += "</Part>\n";
   }  
   postContent += "</CompleteMultipartUpload>\n";
+//   cout << "Request Body: " << postContent << " Length: " << postContent.length() << endl;
 
   // set postdata
   postdata           = reinterpret_cast<const unsigned char*>(postContent.c_str());
@@ -1982,6 +2070,8 @@ int S3fsCurl::CompleteMultipartPostRequest(const char* tpath, string& upload_id,
   curl_easy_setopt(hCurl, CURLOPT_POSTFIELDSIZE, (curl_off_t)postdata_remaining);
   curl_easy_setopt(hCurl, CURLOPT_READDATA, (void*)this);
   curl_easy_setopt(hCurl, CURLOPT_READFUNCTION, S3fsCurl::ReadCallback);
+  curl_easy_setopt(hCurl, CURLOPT_HEADER, true);
+  curl_easy_setopt(hCurl, CURLOPT_VERBOSE, true);
 
   // request
   int result = RequestPerform();
@@ -2105,6 +2195,7 @@ int S3fsCurl::UploadMultipartPostSetup(const char* tpath, int part_num, string& 
 
   // setopt
   curl_easy_setopt(hCurl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(hCurl, CURLOPT_PUT, true);
   curl_easy_setopt(hCurl, CURLOPT_UPLOAD, true);              // HTTP PUT
   curl_easy_setopt(hCurl, CURLOPT_WRITEDATA, (void*)bodydata);
   curl_easy_setopt(hCurl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
@@ -2114,6 +2205,8 @@ int S3fsCurl::UploadMultipartPostSetup(const char* tpath, int part_num, string& 
   curl_easy_setopt(hCurl, CURLOPT_READFUNCTION, S3fsCurl::UploadReadCallback);
   curl_easy_setopt(hCurl, CURLOPT_READDATA, (void*)this);
   curl_easy_setopt(hCurl, CURLOPT_HTTPHEADER, requestHeaders);
+  curl_easy_setopt(hCurl, CURLOPT_HEADER, true);
+  curl_easy_setopt(hCurl, CURLOPT_VERBOSE, true);
 
   return 0;
 }
@@ -2133,6 +2226,7 @@ int S3fsCurl::UploadMultipartPostRequest(const char* tpath, int part_num, string
   // request
   if(0 == (result = RequestPerform())){
     // check etag
+//     cout << "DEBUG: Request Result=" << partdata.etag << endl;
     if(NULL != strstr(headdata->str(), partdata.etag.c_str())){
       partdata.uploaded = true;
     }else{
@@ -2720,12 +2814,57 @@ unsigned char* md5hexsum(int fd, off_t start, off_t size)
   return result;
 }
 
+unsigned char* encryptedMd5hexsum(int fd, off_t start, off_t size)
+{
+  if(size <= 0 || start < 0)
+    return NULL;
+  
+  struct stat st;
+  
+  cout << "DEBUG -1" << endl;
+  fstat(fd, &st);
+  cout << "DEBUG file info=" << st.st_size << endl;
+  
+  cout << "DEBUG Parameters: Offset=" << start << " Length=" << size << endl;
+  MD5_CTX c;
+  cout << "DEBUG 0" << endl;
+  char *buf = new char[size];
+  cout << "DEBUG 1" << endl;
+  unsigned char* result = (unsigned char*)malloc(MD5_DIGEST_LENGTH);
+  
+  cout << "DEBUG 2" << endl;
+  MD5_Init(&c);
+  cout << "DEBUG 3" << endl;  
+  memset(buf, 0, size);
+  cout << "DEBUG 4" << endl;
+//   cout << "DEBUG Buffer Content:" << endl;
+//   for(int i = 0; i < size; i++)
+//     cout << "BUFF DATA: " << buf[i] << endl;
+//   cout << "DEBUG End Buffer Content" << endl;
+  
+  int bytesRead = crypto->preadAES(fd, buf, size, start);
+  cout << "DEBUG EncruptedMD5: " << bytesRead << " SIZE: " << size << " Offset: " << start << endl;
+  if(bytesRead < size)
+  {
+    delete[] buf;
+    free(result);
+    return NULL;
+  }
+  
+  MD5_Update(&c, buf, bytesRead);
+  MD5_Final(result, &c);
+  
+  delete[] buf;
+  return result;
+}
+
 string md5sum(int fd, off_t start, off_t size)
 {
   char md5[2 * MD5_DIGEST_LENGTH + 1];
   char hexbuf[3];
   unsigned char* md5hex;
-
+// cout << "DEBUG md5sum method call" << endl;
+//   if(NULL == (md5hex = ((encrypt_tmp_files) ? encryptedMd5hexsum(fd, start, size) : md5hexsum(fd, start, size)))){
   if(NULL == (md5hex = md5hexsum(fd, start, size))){
     return string("");
   }

@@ -43,6 +43,7 @@
 #include "s3fs.h"
 #include "s3fs_util.h"
 #include "curl.h"
+#include "crypto.h"
 
 using namespace std;
 
@@ -390,7 +391,8 @@ bool PageList::Serialize(CacheFileStat& file, bool is_output)
     }
 
     string strall = ssall.str();
-    if(0 >= pwrite(file.GetFd(), strall.c_str(), strall.length(), 0)){
+    if(0 >= pread(file.GetFd(), (void*)strall.c_str(), strall.length(), 0)){
+//     if(0 >= ((encrypt_tmp_files) ? crypto->preadAES(file.GetFd(), (char*)strall.c_str(), strall.length(), 0) : pread(file.GetFd(), (void*)strall.c_str(), strall.length(), 0))){
       FGPRINT("PageList::Serialize: failed to write stats(%d)\n", errno);
       SYSLOGERR("failed to write stats(%d)", errno);
       return false;
@@ -421,6 +423,7 @@ bool PageList::Serialize(CacheFileStat& file, bool is_output)
     }
     // read from file
     if(0 >= pread(file.GetFd(), ptmp, st.st_size, 0)){
+//     if(0 >= ((encrypt_tmp_files) ? crypto->preadAES(file.GetFd(), ptmp, st.st_size, 0) : pread(file.GetFd(), ptmp, st.st_size, 0))){
       FGPRINT("PageList::Serialize: failed to read stats(%d)\n", errno);
       SYSLOGERR("failed to read stats(%d)", errno);
       free(ptmp);
@@ -977,8 +980,8 @@ ssize_t FdEntity::Read(char* bytes, off_t start, size_t size, bool force_load)
   // Reading
   {
     AutoLock auto_lock(&fdent_lock);
-
-    if(-1 == (rsize = pread(fd, bytes, size, start))){
+    
+    if(-1 == (rsize = ((encrypt_tmp_files) ? crypto->preadAES(fd, bytes, size, start) : pread(fd, bytes, size, start)))){
       FGPRINT("FdEntity::Read: pread failed. errno(%d)\n", errno);
       SYSLOGERR("pread failed. errno(%d)", errno);
       return -errno;
@@ -1008,8 +1011,8 @@ ssize_t FdEntity::Write(const char* bytes, off_t start, size_t size)
   // Writing
   {
     AutoLock auto_lock(&fdent_lock);
-
-    if(-1 == (wsize = pwrite(fd, bytes, size, start))){
+    
+    if(-1 == (wsize = ((encrypt_tmp_files) ? crypto->pwriteAES(fd, bytes, size, start) : pwrite(fd, bytes, size, start)))){
       FGPRINT("FdEntity::Write: pwrite failed. errno(%d)\n", errno);
       SYSLOGERR("pwrite failed. errno(%d)", errno);
       return -errno;

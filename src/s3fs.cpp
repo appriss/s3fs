@@ -48,6 +48,7 @@
 #include "string_util.h"
 #include "s3fs_util.h"
 #include "fdcache.h"
+#include "crypto.h"
 
 using namespace std;
 
@@ -70,10 +71,13 @@ bool debug                        = false;
 bool foreground                   = false;
 bool foreground2                  = false;
 bool nomultipart                  = false;
+bool encrypt_tmp_files            = false;
 std::string program_name;
 std::string service_path          = "/";
 std::string host                  = "http://s3.amazonaws.com";
 std::string bucket                = "";
+
+s3fs::Crypto *crypto;
 
 //-------------------------------------------------------------------
 // Static valiables
@@ -3054,6 +3058,10 @@ static int my_fuse_opt_proc(void* data, const char* arg, int key, struct fuse_ar
       nomultipart = true;
       return 0;
     }
+    if(strstr(arg, "encrypt_tmp_files") != 0){
+      encrypt_tmp_files = true;
+      return 0;
+    }
     if(strstr(arg, "use_rrs") != 0){
       int rrs = 1;
       // for an old format.
@@ -3257,6 +3265,7 @@ int main(int argc, char* argv[])
     {"help",    no_argument, NULL, 'h'},
     {"version", no_argument, 0,     0},
     {"debug",   no_argument, NULL, 'd'},
+    {"encrypt", no_argument, false, 'e'},
     {0, 0, 0, 0}
   };
 
@@ -3420,6 +3429,12 @@ int main(int argc, char* argv[])
      printf("body.text:\n%s\n", body.c_str());
      exit(EXIT_SUCCESS);
   }
+  
+  if(encrypt_tmp_files)
+  {
+    printf("Encryption of temporary files enabled\n");   
+    crypto = new s3fs::Crypto();
+  }
 
   s3fs_oper.getattr   = s3fs_getattr;
   s3fs_oper.readlink  = s3fs_readlink;
@@ -3463,6 +3478,9 @@ int main(int argc, char* argv[])
   fuse_res = fuse_main(custom_args.argc, custom_args.argv, &s3fs_oper, NULL);
   fuse_opt_free_args(&custom_args);
 
+  // delete crypto instance before exiting
+  delete crypto;
+  
   exit(fuse_res);
 }
 

@@ -82,6 +82,12 @@ struct filepart
   }
 };
 
+struct EncryptedData {
+  int fd;
+  off_t offset;
+  size_t size;
+};
+
 // for progress
 struct case_insensitive_compare_func
 {
@@ -161,6 +167,7 @@ class S3fsCurl
     static size_t HeaderCallback(void *data, size_t blockSize, size_t numBlocks, void *userPtr);
     static size_t WriteMemoryCallback(void *ptr, size_t blockSize, size_t numBlocks, void *data);
     static size_t ReadCallback(void *ptr, size_t size, size_t nmemb, void *userp);
+    static size_t EncryptedReadCallback(void *ptr, size_t size, size_t nmemb, void *userp);
     static size_t UploadReadCallback(void *ptr, size_t size, size_t nmemb, void *userp);
     static size_t DownloadWriteCallback(void* ptr, size_t size, size_t nmemb, void* userp);
 
@@ -290,6 +297,7 @@ class S3fsMultiCurl
 //----------------------------------------------
 std::string GetContentMD5(int fd);
 unsigned char* md5hexsum(int fd, off_t start = 0, ssize_t size = -1);
+unsigned char* encryptedMd5hexsum(int fd, off_t start = 0, ssize_t size = -1);
 std::string md5sum(int fd, off_t start = 0, ssize_t size = -1);
 struct curl_slist* curl_slist_sort_insert(struct curl_slist* list, const char* data);
 bool MakeUrlResource(const char* realpath, std::string& resourcepath, std::string& url);
