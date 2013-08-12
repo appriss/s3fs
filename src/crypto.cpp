@@ -283,7 +283,7 @@ std::string s3fs::Crypto::base64encode(unsigned char *s, unsigned int *slen)
   if(res <= 0)
     cerr << "A problem occurred flushing BIO" << endl;
   
-  BUF_MEM *bptr = nullptr;
+  BUF_MEM *bptr;
   BIO_get_mem_ptr(b64, &bptr);
   signature << bptr->data;
 
