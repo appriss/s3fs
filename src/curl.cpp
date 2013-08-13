@@ -151,7 +151,7 @@ curltime_t      S3fsCurl::curl_times;
 curlprogress_t  S3fsCurl::curl_progress;
 string          S3fsCurl::curl_ca_bundle;
 mimes_t         S3fsCurl::mimeTypes;
-int             S3fsCurl::max_parallel_cnt    = 1;    // 5 default
+int             S3fsCurl::max_parallel_cnt    = 5;    // default
 
 //-------------------------------------------------------------------
 // Class methods for S3fsCurl
