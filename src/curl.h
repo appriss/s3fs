@@ -297,7 +297,6 @@ class S3fsMultiCurl
 //----------------------------------------------
 std::string GetContentMD5(int fd);
 unsigned char* md5hexsum(int fd, off_t start = 0, ssize_t size = -1);
-unsigned char* encryptedMd5hexsum(int fd, off_t start = 0, ssize_t size = -1);
 std::string md5sum(int fd, off_t start = 0, ssize_t size = -1);
 struct curl_slist* curl_slist_sort_insert(struct curl_slist* list, const char* data);
 bool MakeUrlResource(const char* realpath, std::string& resourcepath, std::string& url);

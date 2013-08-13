@@ -576,8 +576,7 @@ size_t S3fsCurl::UploadReadCallback(void* ptr, size_t size, size_t nmemb, void* 
       return 0;
     }
   }
-
-  
+ 
   pCurl->partdata.startpos += totalread;
   pCurl->partdata.size     -= totalread;
 
@@ -722,11 +721,10 @@ bool S3fsCurl::UploadMultipartPostCallback(S3fsCurl* s3fscurl)
   if(!s3fscurl){
     return false;
   }
-  
+  // check etag(md5);
   if(NULL == strstr(s3fscurl->headdata->str(), s3fscurl->partdata.etag.c_str())){
     return false;
-  }
-  
+  }  
   s3fscurl->partdata.etaglist->at(s3fscurl->partdata.etagpos).assign(s3fscurl->partdata.etag);
   s3fscurl->partdata.uploaded = true;
 
@@ -1079,7 +1077,6 @@ int S3fsCurl::RequestPerform(FILE* file)
     curl_easy_getinfo(hCurl, CURLINFO_EFFECTIVE_URL , &ptr_url);
     SYSLOGDBG("connecting to URL %s", SAFESTRPTR(ptr_url));
   }
-  // curl_easy_setopt(curl, CURLOPT_VERBOSE, true);
 
   // 1 attempt + retries...
   for(int retrycnt = S3fsCurl::retries; 0 < retrycnt; retrycnt--){
@@ -1693,7 +1690,6 @@ int S3fsCurl::PutRequest(const char* tpath, headers_t& meta, int fd, bool ow_sse
       encryptedData.fd = fd2;
       encryptedData.offset = 0;
       encryptedData.size = st2.st_size;
-      curl_easy_setopt(hCurl, CURLOPT_PUT, true);
       curl_easy_setopt(hCurl, CURLOPT_READFUNCTION, S3fsCurl::EncryptedReadCallback);
       curl_easy_setopt(hCurl, CURLOPT_READDATA, &encryptedData);
       curl_easy_setopt(hCurl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st2.st_size)); // Content-Length
@@ -2038,8 +2034,6 @@ int S3fsCurl::CompleteMultipartPostRequest(const char* tpath, string& upload_id,
   curl_easy_setopt(hCurl, CURLOPT_POSTFIELDSIZE, (curl_off_t)postdata_remaining);
   curl_easy_setopt(hCurl, CURLOPT_READDATA, (void*)this);
   curl_easy_setopt(hCurl, CURLOPT_READFUNCTION, S3fsCurl::ReadCallback);
-  curl_easy_setopt(hCurl, CURLOPT_HEADER, true);
-  curl_easy_setopt(hCurl, CURLOPT_VERBOSE, true);
 
   // request
   int result = RequestPerform();
@@ -2163,7 +2157,6 @@ int S3fsCurl::UploadMultipartPostSetup(const char* tpath, int part_num, string& 
 
   // setopt
   curl_easy_setopt(hCurl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(hCurl, CURLOPT_PUT, true);
   curl_easy_setopt(hCurl, CURLOPT_UPLOAD, true);              // HTTP PUT
   curl_easy_setopt(hCurl, CURLOPT_WRITEDATA, (void*)bodydata);
   curl_easy_setopt(hCurl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
@@ -2173,8 +2166,6 @@ int S3fsCurl::UploadMultipartPostSetup(const char* tpath, int part_num, string& 
   curl_easy_setopt(hCurl, CURLOPT_READFUNCTION, S3fsCurl::UploadReadCallback);
   curl_easy_setopt(hCurl, CURLOPT_READDATA, (void*)this);
   curl_easy_setopt(hCurl, CURLOPT_HTTPHEADER, requestHeaders);
-  curl_easy_setopt(hCurl, CURLOPT_HEADER, true);
-  curl_easy_setopt(hCurl, CURLOPT_VERBOSE, true);
 
   return 0;
 }

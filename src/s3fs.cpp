@@ -3266,7 +3266,6 @@ int main(int argc, char* argv[])
     {"help",    no_argument, NULL, 'h'},
     {"version", no_argument, 0,     0},
     {"debug",   no_argument, NULL, 'd'},
-    {"encrypt", no_argument, false, 'e'},
     {0, 0, 0, 0}
   };
 
