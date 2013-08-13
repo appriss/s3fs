@@ -8,5 +8,6 @@ the main project page at http://code.google.com/p/s3fs.
 Additions added to s3fs version 1.71
 
 1. Implemented mknod function to support special files and block devices.
+	(Note* this was committed upstream in revision r460 and is in release 1.72)
 
 

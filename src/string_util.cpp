@@ -17,6 +17,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
+#include <stdio.h>
 #include <string.h>
 #include <syslog.h>
 
@@ -97,9 +98,35 @@ string urlEncode(const string &s)
   return result;
 }
 
+//
+// ex. target="http://......?keyword=value&..."
+//
+bool get_keyword_value(string& target, const char* keyword, string& value)
+{
+  if(!keyword){
+    return false;
+  }
+  size_t spos;
+  size_t epos;
+  if(string::npos == (spos = target.find(keyword))){
+    return false;
+  }
+  spos += strlen(keyword);
+  if('=' != target.at(spos)){
+    return false;
+  }
+  spos++;
+  if(string::npos == (epos = target.find('&', spos))){
+    value = target.substr(spos);
+  }else{
+    value = target.substr(spos, (epos - spos));
+  }
+  return true;
+}
+
 string prepare_url(const char* url)
 {
-  SYSLOGDBG("URL is %s", url);
+  DPRNNN("URL is %s", url);
 
   string uri;
   string host;
@@ -119,7 +146,7 @@ string prepare_url(const char* url)
 
   url_str = uri + host + path;
 
-  SYSLOGDBG("URL changed is %s", url_str.c_str());
+  DPRNNN("URL changed is %s", url_str.c_str());
 
   return str(url_str);
 }
