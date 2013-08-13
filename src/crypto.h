@@ -37,9 +37,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-// #include "s3fs.h"
-// #include "common.h"
-       
 #define AES_BLOCK_SIZE 16
 
 using namespace std;

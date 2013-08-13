@@ -57,7 +57,6 @@ int s3fs::Crypto::preadAES(int fd, char *buf, size_t buflen, off_t offset)
     
 //     FGPRINT("s3fs::Crypto Encrypted filesize %ld\n", filesize);
 //     SYSLOGERR("s3fs::Crypto Encrypted filesize %ld", filesize);
-//     cout << "Initial Filesize: " << filesize << endl;
     
     //Read the last cipher block to determine the true file size
     memset(readBlock, 0, AES_BLOCK_SIZE);
@@ -69,23 +68,15 @@ int s3fs::Crypto::preadAES(int fd, char *buf, size_t buflen, off_t offset)
 	decrypt_block(readBlock, bytesRead, writeBlock);
 	padlen = get_padding(writeBlock);
 // 	FGPRINT("s3fs::Crypto Encrypted padding length %d\n", padlen);
-// 	cout << "DEBUG Padlen: " << padlen << endl;
 	filesize -= padlen;
     }
-    
-//       FGPRINT("s3fs::Crypto Unencrypted filesize %ld\n", filesize);
-//     cout << "True Filesize: " << filesize << endl;
-    
+        
     if(buflen > filesize)
       buflen = filesize;
     
     memset(readBlock, 0, AES_BLOCK_SIZE);
     memset(writeBlock, 0, AES_BLOCK_SIZE);
-//     cout << "TESTING LINE 1" << endl;
-//     cout << "SIZE_OF_BUFFER=" << sizeof(buffer) << endl;
     memset(buffer, 0, sizeof(buffer));
-//     cout << "TESTING LINE 2" << endl;
-
     do {
         memset(readBlock, 0, AES_BLOCK_SIZE);
         bytesRead = pread(fd, readBlock, AES_BLOCK_SIZE, readOffset);
@@ -178,7 +169,6 @@ int s3fs::Crypto::pwriteAES(int fd, const char *buf, size_t buflen, off_t offset
 	      set_padding(buffer, enclen);
 	      int padlen = get_padding(buffer);
 // 	      FGPRINT("s3fs::Crypto Encrypted padding length %d\n", padlen);
-// 	      cout << "Padding Size: " << padlen << endl;
 	    }
 	    else if (enclen == AES_BLOCK_SIZE && bufIndex == buflen)
 	    { 
@@ -189,7 +179,6 @@ int s3fs::Crypto::pwriteAES(int fd, const char *buf, size_t buflen, off_t offset
 	      set_padding(buffer, 0);
 	      int padlen = get_padding(buffer);
 // 	      FGPRINT("s3fs::Crypto Encrypted padding length %d\n", padlen);
-// 	      cout << "Padding Size: " << padlen << endl;
 	    }
        
             encrypt_block(buffer, AES_BLOCK_SIZE, writeBlock);
@@ -203,14 +192,12 @@ int s3fs::Crypto::pwriteAES(int fd, const char *buf, size_t buflen, off_t offset
             memcpy(buffer, (buf + bufIndex), ((buflen - bufIndex) >= AES_BLOCK_SIZE) ? AES_BLOCK_SIZE : (buflen - bufIndex));
 	    enclen += ((buflen - bufIndex) >= AES_BLOCK_SIZE) ? AES_BLOCK_SIZE : (buflen - bufIndex);
 	    bufIndex += ((buflen - bufIndex) >= AES_BLOCK_SIZE) ? AES_BLOCK_SIZE : (buflen - bufIndex);
-//             cout << "Encryption Length: " << enclen << endl;
 
             if(enclen < AES_BLOCK_SIZE)
 	    {
 	      set_padding(buffer, enclen);
 	      int padlen = get_padding(buffer);
 // 	      FGPRINT("s3fs::Crypto Encrypted padding length %d\n", padlen);
-// 	      cout << "Padding Size: " << padlen << endl;
 	    }
 	    else if (enclen == AES_BLOCK_SIZE && bufIndex == buflen)
 	    { 
@@ -222,7 +209,6 @@ int s3fs::Crypto::pwriteAES(int fd, const char *buf, size_t buflen, off_t offset
 	      set_padding(buffer, 0);
 	      int padlen = get_padding(buffer);
 // 	      FGPRINT("s3fs::Crypto Encrypted padding length %d\n", padlen);
-// 	      cout << "Padding Size: " << padlen << endl;
 	    }
 
 	    encrypt_block(buffer, AES_BLOCK_SIZE, writeBlock);
@@ -308,8 +294,6 @@ void s3fs::Crypto::gen_key()
         abort();
     }
     fclose(urand);
-
-//     cout << "Key: " << &key << endl;
 }
 
 void s3fs::Crypto::gen_iv()
@@ -324,8 +308,6 @@ void s3fs::Crypto::gen_iv()
         abort();
     }
     fclose(urand);
-
-//     cout << "IV: " << &iv << endl;
 }
 
 int s3fs::Crypto::encrypt_block(const unsigned char plain[], int inlen, unsigned char outbuf[])
@@ -346,7 +328,6 @@ int s3fs::Crypto::encrypt_block(const unsigned char plain[], int inlen, unsigned
         cerr << "An error has occurred while encrypting the plain text." << endl;
         EVP_CIPHER_CTX_cleanup(&ctx);
     }
-//     cout << "ENC inlen: " << inlen << " outlen: " << outlen << " tmplen: " << tmplen << endl;
     outlen += tmplen;
     EVP_CIPHER_CTX_cleanup(&ctx);
 
@@ -366,24 +347,14 @@ int s3fs::Crypto::decrypt_block(const unsigned char encrypted[], int inlen, unsi
         cerr << "An error has occurred while decrypting the encrypted text." << endl;
         EVP_CIPHER_CTX_cleanup(&ctx);
     }
-//     cout << "DEBIG: " << outlen << endl;
     if(!EVP_DecryptFinal_ex(&ctx, outbuf + outlen, &tmplen))
     {
         cerr << "An error has occurred while decrypting the encrypted text." << endl;
         EVP_CIPHER_CTX_cleanup(&ctx);
     }
-    
-//     cout << "SIZE OF OUTBUF: " << AES_BLOCK_SIZE << endl;
-//     for(int i = 0; i < AES_BLOCK_SIZE; i++)
-//       printf("outbuf HEX %02x\n", outbuf[i]);
-    
-//     cout << "Temp len: " << tmplen << endl;
-//     cout << "Decrypt Outlen: " << outlen << endl;
-
     outlen += tmplen;
     EVP_CIPHER_CTX_cleanup(&ctx);
 
-//     cout << "Decrypt Outlen Normalized: " << outlen << endl;
     return outlen;
 }
 

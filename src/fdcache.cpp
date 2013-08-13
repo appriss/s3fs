@@ -392,7 +392,6 @@ bool PageList::Serialize(CacheFileStat& file, bool is_output)
 
     string strall = ssall.str();
     if(0 >= pread(file.GetFd(), (void*)strall.c_str(), strall.length(), 0)){
-//     if(0 >= ((encrypt_tmp_files) ? crypto->preadAES(file.GetFd(), (char*)strall.c_str(), strall.length(), 0) : pread(file.GetFd(), (void*)strall.c_str(), strall.length(), 0))){
       FGPRINT("PageList::Serialize: failed to write stats(%d)\n", errno);
       SYSLOGERR("failed to write stats(%d)", errno);
       return false;
@@ -423,7 +422,6 @@ bool PageList::Serialize(CacheFileStat& file, bool is_output)
     }
     // read from file
     if(0 >= pread(file.GetFd(), ptmp, st.st_size, 0)){
-//     if(0 >= ((encrypt_tmp_files) ? crypto->preadAES(file.GetFd(), ptmp, st.st_size, 0) : pread(file.GetFd(), ptmp, st.st_size, 0))){
       FGPRINT("PageList::Serialize: failed to read stats(%d)\n", errno);
       SYSLOGERR("failed to read stats(%d)", errno);
       free(ptmp);

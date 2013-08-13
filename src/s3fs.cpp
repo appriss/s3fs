@@ -3060,6 +3060,7 @@ static int my_fuse_opt_proc(void* data, const char* arg, int key, struct fuse_ar
     }
     if(strstr(arg, "encrypt_tmp_files") != 0){
       encrypt_tmp_files = true;
+      nomultipart = true;
       return 0;
     }
     if(strstr(arg, "use_rrs") != 0){
