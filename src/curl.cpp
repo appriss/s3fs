@@ -50,6 +50,7 @@
 #include "string_util.h"
 #include "s3fs.h"
 #include "s3fs_util.h"
+#include "crypto.h"
 
 using namespace std;
 
@@ -489,6 +490,23 @@ size_t S3fsCurl::ReadCallback(void* ptr, size_t size, size_t nmemb, void* userp)
   return copysize;
 }
 
+size_t S3fsCurl::EncryptedReadCallback(void* ptr, size_t size, size_t nmemb, void* userp)
+{
+  EncryptedData *encryptedData = (EncryptedData*)userp;
+  
+  if(1 > (size * nmemb)){
+    return 0;
+  }
+  
+  if(encryptedData->offset >= encryptedData->size)
+    return 0;
+  
+  int bytesRead = crypto->preadAES(encryptedData->fd, (char*)ptr, (size * nmemb), encryptedData->offset);
+  encryptedData->offset += bytesRead;
+   
+  return bytesRead;
+}
+
 size_t S3fsCurl::HeaderCallback(void* data, size_t blockSize, size_t numBlocks, void* userPtr)
 {
   headers_t* headers = reinterpret_cast<headers_t*>(userPtr);
@@ -560,7 +578,11 @@ size_t S3fsCurl::DownloadWriteCallback(void* ptr, size_t size, size_t nmemb, voi
 
   // write
   for(totalwrite = 0, writebytes = 0; totalwrite < copysize; totalwrite += writebytes){
-    writebytes = pwrite(pCurl->partdata.fd, &((char*)ptr)[totalwrite], (copysize - totalwrite), pCurl->partdata.startpos + totalwrite);
+    if(encrypt_tmp_files){
+      writebytes = crypto->pwriteAES(pCurl->partdata.fd, &((char*)ptr)[totalwrite], (copysize - totalwrite), pCurl->partdata.startpos + totalwrite);
+    } else {
+      writebytes = pwrite(pCurl->partdata.fd, &((char*)ptr)[totalwrite], (copysize - totalwrite), pCurl->partdata.startpos + totalwrite);
+    }
     if(0 == writebytes){
       // eof?
       break;
@@ -1615,8 +1637,20 @@ int S3fsCurl::PutRequest(const char* tpath, headers_t& meta, int fd, bool ow_sse
   curl_easy_setopt(hCurl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
   curl_easy_setopt(hCurl, CURLOPT_HTTPHEADER, requestHeaders);
   if(file){
-    curl_easy_setopt(hCurl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st.st_size)); // Content-Length
-    curl_easy_setopt(hCurl, CURLOPT_INFILE, file);
+    if(encrypt_tmp_files){     
+      struct stat st2;
+      crypto->fstatAES(fd2, &st2);
+      EncryptedData encryptedData;
+      encryptedData.fd = fd2;
+      encryptedData.offset = 0;
+      encryptedData.size = st2.st_size;
+      curl_easy_setopt(hCurl, CURLOPT_READFUNCTION, S3fsCurl::EncryptedReadCallback);
+      curl_easy_setopt(hCurl, CURLOPT_READDATA, &encryptedData);
+      curl_easy_setopt(hCurl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st2.st_size)); // Content-Length
+    } else {
+      curl_easy_setopt(hCurl, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(st.st_size)); // Content-Length
+      curl_easy_setopt(hCurl, CURLOPT_INFILE, file);
+    }
   }else{
     curl_easy_setopt(hCurl, CURLOPT_INFILESIZE, 0);             // Content-Length: 0
   }

@@ -43,6 +43,7 @@
 #include "s3fs.h"
 #include "s3fs_util.h"
 #include "curl.h"
+#include "crypto.h"
 
 using namespace std;
 
@@ -945,7 +946,7 @@ ssize_t FdEntity::Read(char* bytes, off_t start, size_t size, bool force_load)
   {
     AutoLock auto_lock(&fdent_lock);
 
-    if(-1 == (rsize = pread(fd, bytes, size, start))){
+    if(-1 == (rsize = ((encrypt_tmp_files) ? crypto->preadAES(fd, bytes, size, start) : pread(fd, bytes, size, start)))){
       DPRN("pread failed. errno(%d)", errno);
       return -errno;
     }
@@ -974,7 +975,7 @@ ssize_t FdEntity::Write(const char* bytes, off_t start, size_t size)
   {
     AutoLock auto_lock(&fdent_lock);
 
-    if(-1 == (wsize = pwrite(fd, bytes, size, start))){
+    if(-1 == (wsize = ((encrypt_tmp_files) ? crypto->pwriteAES(fd, bytes, size, start) : pwrite(fd, bytes, size, start)))){
       DPRN("pwrite failed. errno(%d)", errno);
       return -errno;
     }
