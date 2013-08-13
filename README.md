@@ -10,4 +10,10 @@ Additions added to s3fs version 1.71
 1. Implemented mknod function to support special files and block devices.
 	(Note* this was committed upstream in revision r460 and is in release 1.72)
 
+UPDATES:
+
+This project has been updated to upstream release 1.72
+
+1. Implemented encryption of temporary files that hit the disk. This feature is enabled using the -o encrypt_tmp_files option. Setting this option also enables the nomultipart flag.
+
 
