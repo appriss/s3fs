@@ -112,6 +112,22 @@ class S3fsCurl
     friend class S3fsMultiCurl;  
 
   private:
+    enum REQTYPE {
+      REQTYPE_UNSET  = -1,
+      REQTYPE_DELETE = 0,
+      REQTYPE_HEAD,
+      REQTYPE_PUTHEAD,
+      REQTYPE_PUT,
+      REQTYPE_GET,
+      REQTYPE_CHKBUCKET,
+      REQTYPE_LISTBUCKET,
+      REQTYPE_PREMULTIPOST,
+      REQTYPE_COMPLETEMULTIPOST,
+      REQTYPE_UPLOADMULTIPOST,
+      REQTYPE_COPYMULTIPOST,
+      REQTYPE_MULTILIST
+    };
+
     // class variables
     static pthread_mutex_t curl_handles_lock;
     static pthread_mutex_t curl_share_lock;
@@ -126,6 +142,7 @@ class S3fsCurl
     static bool            is_use_rrs;
     static bool            is_use_sse;
     static bool            is_content_md5;
+    static bool            is_verbose;
     static std::string     AWSAccessKeyId;
     static std::string     AWSSecretAccessKey;
     static long            ssl_verify_hostname;
@@ -138,22 +155,29 @@ class S3fsCurl
 
     // variables
     CURL*                hCurl;
-    std::string          path;               // target object path
-    std::string          base_path;          // base path (for multi curl head request)
-    std::string          saved_path;         // saved path = cache key (for multi curl head request)
-    std::string          url;                // target object path(url)
+    REQTYPE              type;                 // type of request
+    std::string          path;                 // target object path
+    std::string          base_path;            // base path (for multi curl head request)
+    std::string          saved_path;           // saved path = cache key (for multi curl head request)
+    std::string          url;                  // target object path(url)
     struct curl_slist*   requestHeaders;
-    headers_t            responseHeaders;    // header data by HeaderCallback
-    BodyData*            bodydata;           // body data by WriteMemoryCallback
-    BodyData*            headdata;           // header data by WriteMemoryCallback
+    headers_t            responseHeaders;      // header data by HeaderCallback
+    BodyData*            bodydata;             // body data by WriteMemoryCallback
+    BodyData*            headdata;             // header data by WriteMemoryCallback
     long                 LastResponseCode;
-    const unsigned char* postdata;           // use by post method and read callback function.
-    int                  postdata_remaining; // use by post method and read callback function.
-    filepart             partdata;           // use by multipart upload/get object callback
+    const unsigned char* postdata;             // use by post method and read callback function.
+    int                  postdata_remaining;   // use by post method and read callback function.
+    filepart             partdata;             // use by multipart upload/get object callback
+    bool                 is_use_ahbe;          // additional header by extension
+    FILE*                b_infile;             // backup for retrying
+    const unsigned char* b_postdata;           // backup for retrying
+    int                  b_postdata_remaining; // backup for retrying
+    off_t                b_partdata_startpos;  // backup for retrying
+    ssize_t              b_partdata_size;      // backup for retrying
 
   public:
     // constructor/destructor
-    S3fsCurl();
+    S3fsCurl(bool ahbe = false);
     ~S3fsCurl();
 
   private:
@@ -176,6 +200,8 @@ class S3fsCurl
     static S3fsCurl* ParallelGetObjectRetryCallback(S3fsCurl* s3fscurl);
 
     // methods
+    bool ResetHandle(void);
+    bool RemakeHandle(void);
     bool ClearInternalData(void);
     std::string CalcSignature(std::string method, std::string strMD5, std::string content_type, std::string date, std::string resource);
     bool GetUploadId(std::string& upload_id);
@@ -212,6 +238,8 @@ class S3fsCurl
     static bool SetUseSse(bool flag);
     static bool GetUseSse(void) { return S3fsCurl::is_use_sse; }
     static bool SetContentMd5(bool flag);
+    static bool SetVerbose(bool flag);
+    static bool GetVerbose(void) { return S3fsCurl::is_verbose; }
     static bool SetAccessKey(const char* AccessKeyId, const char* SecretAccessKey);
     static bool IsSetAccessKeyId(void) { return (0 < S3fsCurl::AWSAccessKeyId.size() && 0 < S3fsCurl::AWSSecretAccessKey.size()); }
     static long SetSslVerifyHostname(long value);
@@ -223,7 +251,7 @@ class S3fsCurl
     bool DestroyCurlHandle(void);
 
     bool GetResponseCode(long& responseCode);
-    int RequestPerform(FILE* file = NULL);
+    int RequestPerform(void);
     int DeleteRequest(const char* tpath);
     bool PreHeadRequest(const char* tpath, const char* bpath = NULL, const char* savedpath = NULL);
     bool PreHeadRequest(std::string& tpath, std::string& bpath, std::string& savedpath) {
@@ -251,6 +279,10 @@ class S3fsCurl
     BodyData* GetBodyData(void) const { return bodydata; }
     BodyData* GetHeadData(void) const { return headdata; }
     long GetLastResponseCode(void) const { return LastResponseCode; }
+    bool SetUseAhbe(bool ahbe);
+    bool EnableUseAhbe(void) { return SetUseAhbe(true); }
+    bool DisableUseAhbe(void) { return SetUseAhbe(false); }
+    bool IsUseAhbe(void) const { return is_use_ahbe; }
 };
 
 //----------------------------------------------
@@ -293,11 +325,41 @@ class S3fsMultiCurl
 };
 
 //----------------------------------------------
+// class AdditionalHeader
+//----------------------------------------------
+typedef std::list<int> charcnt_list_t;
+typedef std::map<std::string, std::string> headerpair_t;
+typedef std::map<std::string, headerpair_t> addheader_t;
+
+class AdditionalHeader
+{
+  private:
+    static AdditionalHeader singleton;
+    bool                    is_enable;
+    charcnt_list_t          charcntlist;
+    addheader_t             addheader;
+
+  public:
+    // Reference singleton
+    static AdditionalHeader* get(void) { return &singleton; }
+
+    AdditionalHeader();
+    ~AdditionalHeader();
+
+    bool Load(const char* file);
+    void Unload(void);
+
+    bool AddHeader(headers_t& meta, const char* path) const;
+    struct curl_slist* AddHeader(struct curl_slist* list, const char* path) const;
+    bool Dump(void) const;
+};
+
+//----------------------------------------------
 // Utility Functions
 //----------------------------------------------
 std::string GetContentMD5(int fd);
-unsigned char* md5hexsum(int fd, off_t start = 0, ssize_t size = -1);
-std::string md5sum(int fd, off_t start = 0, ssize_t size = -1);
+unsigned char* md5hexsum(int fd, off_t start, ssize_t size);
+std::string md5sum(int fd, off_t start, ssize_t size);
 struct curl_slist* curl_slist_sort_insert(struct curl_slist* list, const char* data);
 bool MakeUrlResource(const char* realpath, std::string& resourcepath, std::string& url);
 
